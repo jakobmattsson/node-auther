@@ -51,21 +51,19 @@ var storage = block(function() {
         callback();
       }
     },
-
-    createUser: function(email, data, callback) {
-      var newuser = false;
-      var user = db.users[email];
-
-      if (!user) {
-        newuser = true;
-        user = db.users[email] = {};
+    createUser: function(email, password, confirmationToken, salt, callback) {
+      if (db.users[email]) {
+        callback('User exists');
+        return;
       }
 
-      Object.keys(data).forEach(function(key) {
-        user[key] = data[key];
-      });
+      db.users[email] = {
+        password: password,
+        activationToken: confirmationToken,
+        salt: salt
+      };
 
-      callback(null, newuser);
+      callback();
     },
     getUser: function(email, callback) {
       callback(null, db.users[email]);

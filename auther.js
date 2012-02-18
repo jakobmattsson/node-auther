@@ -191,11 +191,7 @@ exports.createAuthenticator = function(config) {
         var salt = createSalt();
         var activationToken = createSalt();
 
-        storage.createUser(email, {
-          password: hash(password + salt),
-          activationToken: hash(activationToken),
-          salt: salt
-        }, function(err) {
+        storage.createUser(email, hash(password + salt), hash(activationToken), salt, function(err) {
           if (err) {
             callback(err);
             return;
