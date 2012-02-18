@@ -14,42 +14,24 @@ var storage = block(function() {
   };
 
   return {
-    putToken: function(token, email, expires, callback) {
-      db.tokens[token] = { email: email, expires: expires };
-      callback();
-    },
-    isTokenUnique: function(token, callback) {
-      callback(null, !db.tokens[token]);
-    },
-    getTokenData: function(token, callback) {
+    getToken: function(token, callback) {
       if (!db.tokens[token]) {
         callback("Invalid token");
       } else {
-        callback(null, db.tokens[token].expires, db.tokens[token].email);
+        callback(null, db.tokens[token]);
       }
     },
-
-    deleteExpiredTokens: function(threshold, callback) {
-      
-      
-    },
-
-    setUserConfirmed: function(email, callback) {
+    getUser: function(email, callback) {
       if (!db.users[email]) {
         callback('Invalid user');
       } else {
-        db.users[email].activationToken = null;
-        callback();
+        callback(null, db.users[email]);
       }
     },
 
-    setUserPassword: function(email, password, callback) {
-      if (!db.users[email]) {
-        callback('Invalid user');
-      } else {
-        db.users[email].password = password;
-        callback();
-      }
+    createToken: function(token, email, expires, callback) {
+      db.tokens[token] = { email: email, expires: expires };
+      callback();
     },
     createUser: function(email, password, confirmationToken, salt, callback) {
       if (db.users[email]) {
@@ -59,22 +41,39 @@ var storage = block(function() {
 
       db.users[email] = {
         password: password,
-        activationToken: confirmationToken,
+        confirmationToken: confirmationToken,
         salt: salt
       };
 
       callback();
     },
-    getUser: function(email, callback) {
-      callback(null, db.users[email]);
-    },
-    delUser: function(email, callback) {
-      if (db.users[email]) {
-        delete db.users[email];
-        callback(null, true);
+
+    setUserConfirmed: function(email, callback) {
+      if (!db.users[email]) {
+        callback('Invalid user');
+      } else {
+        db.users[email].confirmationToken = null;
+        callback();
       }
-      callback(null, false);
     },
+    setUserPassword: function(email, password, callback) {
+      if (!db.users[email]) {
+        callback('Invalid user');
+      } else {
+        db.users[email].password = password;
+        callback();
+      }
+    },
+
+    deleteExpiredTokens: function(threshold, callback) {
+      Object.keys(db.tokens).forEach(function(token) {
+        if (db.tokens[token].expires < threshold) {
+          delete db.tokens[token];
+        }
+      });
+      callback();
+    },
+
     print: function() {
       console.log(require('sys').inspect(db, false, 10));
     }
@@ -88,10 +87,10 @@ var auther = autherCore.createAuthenticator({ storage: storage });
 
 async.series([
   function(callback) {
-    auther.createUser('jakob1@gmail.com', 'test', callback);
+    auther.createUser('jakob1@gmail.com', 'testpassword', callback);
   },
   function(callback) {
-    auther.createUser('jakob2@gmail.com', 'testar', callback);
+    auther.createUser('jakob2@gmail.com', 'anotherpassword', callback);
   },
   function(callback) {
     auther.createUser('jakob3@gmail.com', 'a', function(err) {
@@ -100,7 +99,7 @@ async.series([
     });
   },
   function(callback) {
-    auther.createUser('jakob4@gmail.com', '123456', function(err) {
+    auther.createUser('jakob4@gmail.com', '123456789', function(err) {
       assert.equal(err, 'Password too common');
       callback();
     });
@@ -124,7 +123,7 @@ async.series([
     });
   },
   function(callback) {
-    auther.authenticatePassword('jakob1@gmail.com', 'test', function(err, token) {
+    auther.authenticatePassword('jakob1@gmail.com', 'testpassword', function(err, token) {
       assert.ok(token);
       auther.authenticateToken(token, function(err) {
         assert.ifError(err);
@@ -157,7 +156,7 @@ async.series([
     });
   },
   function(callback) {
-    auther.authenticatePassword('jakob1@gmail.com', 'test', function(err, token) {
+    auther.authenticatePassword('jakob1@gmail.com', 'testpassword', function(err, token) {
       assert.equal(err, "Invalid username or password");
       callback();
     });
@@ -180,10 +179,10 @@ async.series([
     auther.createUser('jakob8@gmail.com', 'lösenord', function(err, activationToken) {
       assert.ifError(err);
       assert.ok(activationToken);
-      auther.validateEmail(activationToken, 'jakob8@gmail.com', function(err, alreadyValidated) {
+      auther.confirmEmail(activationToken, 'jakob8@gmail.com', function(err, alreadyValidated) {
         assert.ifError(err);
         assert.equal(false, alreadyValidated);
-        auther.validateEmail(activationToken, 'jakob8@gmail.com', function(err, alreadyValidated) {
+        auther.confirmEmail(activationToken, 'jakob8@gmail.com', function(err, alreadyValidated) {
           assert.ifError(err);
           assert.equal(true, alreadyValidated);
           callback();

@@ -1,9 +1,6 @@
 var jshashes = require('jshashes');
 var rbytes = require('rbytes');
 
-
-
-
 var block = function(f) {
   return f();
 };
@@ -21,29 +18,16 @@ var isUndefined = function(x) {
 };
 
 
-
-
-
-// TODO:
-// * single user throttling
-// * system wide throttling
-// * garbage collecting tokens
 // * two build-in persisters; one inmemory and one connecting to a central service.
 // * sending emails
-
-// Notes:
-// * The activation token is not guaranteed to be unique. It's just an identifier for each user.
-
-
-
 
 
 exports.createAuthenticator = function(config) {
   config = config || {};
-  config.badPasswords = config.badPasswords || ['password', '123456'];
-  config.minPasswordLength = config.minPasswordLength || 4;
-
-  var storage = config.storage;
+  config.badPasswords = config.badPasswords || ['password', '123456789'];
+  config.minPasswordLength = config.minPasswordLength || 6;
+  config.tokenGarbageCollectionInterval = config.tokenGarbageCollectionInterval || 30;
+  var binding = config.storage;
 
   var validatePassword = function(password, callback) {
     if (password.length < config.minPasswordLength) {
@@ -58,26 +42,49 @@ exports.createAuthenticator = function(config) {
 
     callback();
   };
-  var makeUniqueToken = function(callback) {
+  var makeUniqueToken = function(attempts, callback) {
+    if (isUndefined(callback)) {
+      callback = attempts;
+      attempts = 10;
+    }
+
+    if (!attempts) {
+      callback('Failed to generate unique token');
+      return;
+    }
+
     var token = createSalt();
-    storage.isTokenUnique(token, function(err, uniq) {
+    binding.getToken(token, function(err) {
       if (err) {
-        callback(err);
-        return;
-      }
-      if (uniq) {
         callback(null, token);
       } else {
-        makeUniqueToken(callback);
+        makeUniqueToken(attempts - 1, callback);
       }
     });
   };
+  var tokenGC = block(function() {
+    var lastGC = 0;
+    return function(f) {
+      return function() {
+        var self = this;
+        var args = arguments
+        var currentTime = getTime();
 
+        if (lastGC + config.tokenGarbageCollectionInterval * 60 * 1000 <= currentTime) {
+          lastGC = currentTime;
+          binding.deleteExpiredTokens(currentTime, function() {
+            f.apply(self, args);
+          });
+        } else {
+          f.apply(self, args);
+        }
+      };
+    };
+  });
 
   var auth = {};
 
-  // Generate a token that can be used to reset password or login
-  auth.generateToken = function(email, expiry, callback) {
+  auth.generateToken = tokenGC(function(email, expiry, callback) {
     if (isUndefined(callback)) {
       callback = expiry;
       expiry = 60;
@@ -89,7 +96,7 @@ exports.createAuthenticator = function(config) {
         return;
       }
 
-      storage.putToken(hash(token), email, getTime() + expiry, function(err) {
+      binding.createToken(hash(token), email, getTime() + expiry * 60 * 1000, function(err) {
         if (err) {
           callback('Internal error');
           return;
@@ -97,30 +104,27 @@ exports.createAuthenticator = function(config) {
         callback(null, token);
       });
     });
-  };
-
-
-
-  auth.updatePassword = function(token, password, callback) {
+  });
+  auth.updatePassword = tokenGC(function(token, password, callback) {
     validatePassword(password, function(err) {
       if (err) {
         callback(err);
         return;
       }
 
-      storage.getTokenData(hash(token), function(err, expiry, email) {
-        if (err || expiry < getTime()) {
+      binding.getToken(hash(token), function(err, t) {
+        if (err || t.expires < getTime()) {
           callback("Invalid token");
           return;
         }
 
-        storage.getUser(email, function(err, user) {
+        binding.getUser(t.email, function(err, user) {
           if (err) {
             callback("Internal error");
             return;
           }
 
-          storage.setUserPassword(email, hash(password + user.salt), function(err) {
+          binding.setUserPassword(t.email, hash(password + user.salt), function(err) {
             if (err) {
               callback("Internal error");
             } else {
@@ -130,23 +134,21 @@ exports.createAuthenticator = function(config) {
         });
       });
     });
-  };
-
-  // callback(err, alreadyValidated)
-  auth.validateEmail = function(token, email, callback) {
-    storage.getUser(email, function(err, user) {
+  });
+  auth.confirmEmail = tokenGC(function(token, email, callback) {
+    binding.getUser(email, function(err, user) {
       if (err) {
         callback("Invalid user");
         return;
       }
 
-      if (!user.activationToken) {
+      if (!user.confirmationToken) {
         callback(null, true);
         return;
       }
 
-      if (hash(token) == user.activationToken) {
-        storage.setUserConfirmed(email, function(err) {
+      if (hash(token) == user.confirmationToken) {
+        binding.setUserConfirmed(email, function(err) {
           callback(err, false);
         });
       } else {
@@ -154,30 +156,21 @@ exports.createAuthenticator = function(config) {
         return;
       }
     });
-  };
+  });
 
-
-
-  // callback(err, isUser, isActivated)
-  auth.isUser = function(email, callback) {
-    storage.getUser(email, function(err, user) {
-      if (err) {
-        callback(err);
-      } else {
-        callback(null, !!user, user && !user.activationToken);
-      }
+  auth.isUser = tokenGC(function(email, callback) {
+    binding.getUser(email, function(err, user) {
+      callback(err, !err && !!user, !err && user && !user.confirmationToken);
     });
-  };
-
-  // callback(err)
-  auth.createUser = function(email, password, callback) {
+  });
+  auth.createUser = tokenGC(function(email, password, callback) {
     if (email.indexOf('@') === -1) {
       callback('Invalid email');
       return;
     }
 
-    storage.getUser(email, function(err, user) {
-      if (err || user) {
+    binding.getUser(email, function(err, user) {
+      if (!err) {
         callback('Email already taken');
         return;
       }
@@ -189,37 +182,27 @@ exports.createAuthenticator = function(config) {
         }
 
         var salt = createSalt();
-        var activationToken = createSalt();
+        var confirmationToken = createSalt();
 
-        storage.createUser(email, hash(password + salt), hash(activationToken), salt, function(err) {
+        binding.createUser(email, hash(password + salt), hash(confirmationToken), salt, function(err) {
           if (err) {
             callback(err);
             return;
           }
 
-          callback(null, activationToken);
+          callback(null, confirmationToken);
         });
       });
     });
-  };
+  });
 
-  // callback(err, deletedAnActualUser)
-  auth.deleteUser = function(email, callback) {
-    storage.delUser(email, function(err, deletedAnActualUser) {
-      callback(err, deletedAnActualUser);
-    });
-  };
-
-
-
-  // callback(err, authToken)
-  auth.authenticatePassword = function(email, password, sessionLength, callback) {
+  auth.authenticatePassword = tokenGC(function(email, password, sessionLength, callback) {
     if (typeof callback == "undefined") {
       callback = sessionLength;
       sessionLength = 30;
     }
 
-    storage.getUser(email, function(err, user) {
+    binding.getUser(email, function(err, user) {
       if (err || !user || hash(password + user.salt) != user.password) {
         callback('Invalid username or password');
         return;
@@ -227,26 +210,21 @@ exports.createAuthenticator = function(config) {
 
       auth.generateToken(email, sessionLength, callback);
     });
-  };
-
-  // callback(err)
-  auth.authenticateToken = function(authToken, callback) {
-    storage.getTokenData(hash(authToken), function(err, expiry) {
-      if (err || expiry < getTime()) {
+  });
+  auth.authenticateToken = tokenGC(function(authToken, callback) {
+    binding.getToken(hash(authToken), function(err, t) {
+      if (err || t.expires < getTime()) {
         callback("Invalid token");
       } else {
         callback();
       }
     });
-  };
-
-  // callback(err)
-  auth.invalidateToken = function(authToken, callback) {
-    storage.putToken(hash(authToken), null, 0, function(err) {
+  });
+  auth.invalidateToken = tokenGC(function(authToken, callback) {
+    binding.createToken(hash(authToken), null, 0, function(err) {
       callback(err);
     });
-  };
-
+  });
 
   return auth;
 };
