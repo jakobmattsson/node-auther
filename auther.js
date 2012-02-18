@@ -1,5 +1,5 @@
 var jshashes = require('jshashes');
-var rbytes = require("rbytes");
+var rbytes = require('rbytes');
 
 
 
@@ -21,65 +21,18 @@ var isUndefined = function(x) {
 };
 
 
-var storage = block(function() {
-  var all = {
-    db: {},
-    tokens: {}
-  };
-
-  var db = all.db;
-  var tokens = all.tokens;
-  return {
-    putToken: function(token, expires, callback) {
-      tokens[token] = expires;
-      callback();
-    },
-    getTokenExpiry: function(token, callback) {
-      if (!tokens[token]) {
-        callback("Invalid token");
-      } else {
-        callback(null, tokens[token]);
-      }
-    },
-    putUser: function(email, data, callback) {
-      var newuser = false;
-      var user = db[email];
-
-      if (!user) {
-        newuser = true;
-        user = db[email] = {};
-      }
-
-      Object.keys(data).forEach(function(key) {
-        user[key] = data[key];
-      });
-
-      callback(null, newuser);
-    },
-    getUser: function(email, callback) {
-      callback(null, db[email]);
-    },
-    delUser: function(email, callback) {
-      if (db[email]) {
-        delete db[email];
-        callback(null, true);
-      }
-      callback(null, false);
-    },
-    all: function() {
-      return all;
-    }
-  };
-});
 
 
 
 // TODO:
 // * single user throttling
 // * system wide throttling
-// * guaranteed token uniqueness
+// * garbage collecting tokens
+// * two build-in persisters; one inmemory and one connecting to a central service.
+// * sending emails
 
-
+// Notes:
+// * The activation token is not guaranteed to be unique. It's just an identifier for each user.
 
 
 
@@ -88,61 +41,101 @@ var storage = block(function() {
 exports.createAuthenticator = function(config) {
   config = config || {};
   config.badPasswords = config.badPasswords || ['password', '123456'];
+  config.minPasswordLength = config.minPasswordLength || 4;
 
+  var storage = config.storage;
+
+  var validatePassword = function(password, callback) {
+    if (password.length < config.minPasswordLength) {
+      callback("Password too short");
+      return;
+    }
+
+    if (config.badPasswords.indexOf(password) !== -1) {
+      callback('Password too common');
+      return;
+    }
+
+    callback();
+  };
+  var makeUniqueToken = function(callback) {
+    var token = createSalt();
+    storage.isTokenUnique(token, function(err, uniq) {
+      if (err) {
+        callback(err);
+        return;
+      }
+      if (uniq) {
+        callback(null, token);
+      } else {
+        makeUniqueToken(callback);
+      }
+    });
+  };
 
 
   var auth = {};
 
+  // Generate a token that can be used to reset password or login
   auth.generateToken = function(email, expiry, callback) {
     if (isUndefined(callback)) {
       callback = expiry;
       expiry = 60;
     }
-
-    var token = createSalt();
-
-    storage.putToken(hash(token), getTime() + expiry, function(err) {
+    
+    makeUniqueToken(function(err, token) {
       if (err) {
         callback('Internal error');
         return;
       }
-      callback(null, token);
+
+      storage.putToken(hash(token), email, getTime() + expiry, function(err) {
+        if (err) {
+          callback('Internal error');
+          return;
+        }
+        callback(null, token);
+      });
     });
   };
 
 
 
-  auth.resetPassword = function(email, resetToken, password, callback) {
-
-    // kontrollera att det är ett bra lösenord, som vanligt.
-
-    storage.getTokenExpiry(hash(resetToken), function(err, expiry) {
-      if (err || expiry < getTime()) {
-        callback("Invalid token");
+  auth.updatePassword = function(token, password, callback) {
+    validatePassword(password, function(err) {
+      if (err) {
+        callback(err);
         return;
       }
 
-      storage.getUser(email, function(err, user) {
-        if (err) {
-          callback("Internal error");
+      storage.getTokenData(hash(token), function(err, expiry, email) {
+        if (err || expiry < getTime()) {
+          callback("Invalid token");
           return;
         }
 
-        storage.putUser(email, {
-          password: hash(password + user.salt)
-        }, function(err) {
+        storage.getUser(email, function(err, user) {
           if (err) {
             callback("Internal error");
-          } else {
-            callback();
+            return;
           }
+
+          storage.putUser(email, {
+            password: hash(password + user.salt)
+          }, function(err) {
+            if (err) {
+              callback("Internal error");
+            } else {
+              callback();
+            }
+          });
         });
       });
     });
   };
 
   // callback(err, alreadyValidated)
-  auth.validateEmail = function(email, validationToken, callback) {
+  auth.validateEmail = function(token, email, callback) {
     storage.getUser(email, function(err, user) {
       if (err) {
         callback("Invalid user");
@@ -154,7 +147,7 @@ exports.createAuthenticator = function(config) {
         return;
       }
 
-      if (hash(validationToken) == user.activationToken) {
+      if (hash(token) == user.activationToken) {
         storage.putUser(email, { activationToken: null }, function(err) {
           callback(err, false);
         });
@@ -191,30 +184,27 @@ exports.createAuthenticator = function(config) {
         return;
       }
 
-      if (password.length <= 3) {
-        callback("Password too short");
-        return;
-      }
-
-      if (config.badPasswords.indexOf(password) !== -1) {
-        callback('Password too common');
-        return;
-      }
-
-      var salt = createSalt();
-      var activationToken = createSalt();
-
-      storage.putUser(email, {
-        password: hash(password + salt),
-        activationToken: hash(activationToken),
-        salt: salt
-      }, function(err) {
+      validatePassword(password, function(err) {
         if (err) {
           callback(err);
           return;
         }
 
-        callback(null, activationToken);
+        var salt = createSalt();
+        var activationToken = createSalt();
+
+        storage.putUser(email, {
+          password: hash(password + salt),
+          activationToken: hash(activationToken),
+          salt: salt
+        }, function(err) {
+          if (err) {
+            callback(err);
+            return;
+          }
+
+          callback(null, activationToken);
+        });
       });
     });
   };
@@ -245,10 +235,9 @@ exports.createAuthenticator = function(config) {
     });
   };
 
-
   // callback(err)
   auth.authenticateToken = function(authToken, callback) {
-    storage.getTokenExpiry(hash(authToken), function(err, expiry) {
+    storage.getTokenData(hash(authToken), function(err, expiry) {
       if (err || expiry < getTime()) {
         callback("Invalid token");
       } else {
@@ -259,20 +248,14 @@ exports.createAuthenticator = function(config) {
 
   // callback(err)
   auth.invalidateToken = function(authToken, callback) {
-    storage.putToken(hash(authToken), 0, function(err) {
+    storage.putToken(hash(authToken), null, 0, function(err) {
       callback(err);
     });
   };
 
 
-
-
-  auth.print = function() {
-    console.log(require('sys').inspect(storage.all(), false, 10));
-  };
-
-  
   return auth;
 };
+
 
 

@@ -3,10 +3,73 @@ var assert = require('assert');
 var async = require("async");
 var autherCore = require('./auther.js');
 
-var print = function() {
+var block = function(f) {
+  return f();
 };
 
-var auther = autherCore.createAuthenticator();
+var storage = block(function() {
+  var all = {
+    db: {},
+    tokens: {}
+  };
+
+  var db = all.db;
+  var tokens = all.tokens;
+  return {
+    putToken: function(token, email, expires, callback) {
+      tokens[token] = { email: email, expires: expires };
+      callback();
+    },
+    isTokenUnique: function(token, callback) {
+      callback(null, true);
+    },
+    getTokenData: function(token, callback) {
+      if (!tokens[token]) {
+        callback("Invalid token");
+      } else {
+        callback(null, tokens[token].expires, tokens[token].email);
+      }
+    },
+
+    deleteExpiredTokens: function(threshold, callback) {
+      
+      
+    },
+
+    putUser: function(email, data, callback) {
+      var newuser = false;
+      var user = db[email];
+
+      if (!user) {
+        newuser = true;
+        user = db[email] = {};
+      }
+
+      Object.keys(data).forEach(function(key) {
+        user[key] = data[key];
+      });
+
+      callback(null, newuser);
+    },
+    getUser: function(email, callback) {
+      callback(null, db[email]);
+    },
+    delUser: function(email, callback) {
+      if (db[email]) {
+        delete db[email];
+        callback(null, true);
+      }
+      callback(null, false);
+    },
+    print: function() {
+      console.log(require('sys').inspect(all, false, 10));
+    }
+  };
+});
+
+var auther = autherCore.createAuthenticator({ storage: storage });
+
+
 
 
 async.series([
@@ -62,7 +125,7 @@ async.series([
     });
   },
   function(callback) {
-    auther.resetPassword('jakob1@gmail.com', 'token', 'new_password', function(err) {
+    auther.updatePassword('token', 'new_password', function(err) {
       assert.equal(err, "Invalid token");
       callback();
     });
@@ -70,9 +133,12 @@ async.series([
   function(callback) {
     auther.generateToken('jakob1@gmail.com', function(err, token) {
       assert.ok(token);
-      auther.resetPassword('jakob1@gmail.com', token, 'new_password', function(err) {
-        assert.ifError(err);
-        callback();
+      auther.updatePassword(token, '12', function(err) {
+        assert.equal(err, 'Password too short');
+        auther.updatePassword(token, 'new_password', function(err) {
+          assert.ifError(err);
+          callback();
+        });
       });
     });
   },
@@ -100,10 +166,10 @@ async.series([
     auther.createUser('jakob8@gmail.com', 'lösenord', function(err, activationToken) {
       assert.ifError(err);
       assert.ok(activationToken);
-      auther.validateEmail('jakob8@gmail.com', activationToken, function(err, alreadyValidated) {
+      auther.validateEmail(activationToken, 'jakob8@gmail.com', function(err, alreadyValidated) {
         assert.ifError(err);
         assert.equal(false, alreadyValidated);
-        auther.validateEmail('jakob8@gmail.com', activationToken, function(err, alreadyValidated) {
+        auther.validateEmail(activationToken, 'jakob8@gmail.com', function(err, alreadyValidated) {
           assert.ifError(err);
           assert.equal(true, alreadyValidated);
           callback();
@@ -137,7 +203,7 @@ async.series([
     console.log("done without errors!");
   }
   
-  auther.print();
+  storage.print();
 });
 
 
