@@ -1,0 +1,20 @@
+{
+  "name": "node-auther",
+  "description": "Authentication library for node",
+  "version": "0.0.1",
+  "author": "Jakob Mattsson <jakob.mattsson@gmail.com> (jakobmattsson.se)",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/jakobmattsson/node-auther.git"
+  },
+  "engines": {
+    "node": "*"
+  },
+  "dependencies": {
+    "jshashes": "0.1.3b",
+    "rbytes": "0.0.2"
+  },
+  "devDependencies": {
+    "async": "0.1.16"
+  }
+}

@@ -1,89 +1,7 @@
-var sys = require('sys');
 var assert = require('assert');
-var async = require("async");
-var autherCore = require('../lib/auther.js');
-
-var block = function(f) {
-  return f();
-};
-
-var storage = block(function() {
-  var db = {
-    users: {},
-    tokens: {}
-  };
-
-  return {
-    getToken: function(token, callback) {
-      if (!db.tokens[token]) {
-        callback("Invalid token");
-      } else {
-        callback(null, db.tokens[token]);
-      }
-    },
-    getUser: function(email, callback) {
-      if (!db.users[email]) {
-        callback('Invalid user');
-      } else {
-        callback(null, db.users[email]);
-      }
-    },
-
-    createToken: function(token, email, expires, callback) {
-      db.tokens[token] = { email: email, expires: expires };
-      callback();
-    },
-    createUser: function(email, password, confirmationToken, salt, callback) {
-      if (db.users[email]) {
-        callback('User exists');
-        return;
-      }
-
-      db.users[email] = {
-        password: password,
-        confirmationToken: confirmationToken,
-        salt: salt
-      };
-
-      callback();
-    },
-
-    setUserConfirmed: function(email, callback) {
-      if (!db.users[email]) {
-        callback('Invalid user');
-      } else {
-        db.users[email].confirmationToken = null;
-        callback();
-      }
-    },
-    setUserPassword: function(email, password, callback) {
-      if (!db.users[email]) {
-        callback('Invalid user');
-      } else {
-        db.users[email].password = password;
-        callback();
-      }
-    },
-
-    deleteExpiredTokens: function(threshold, callback) {
-      Object.keys(db.tokens).forEach(function(token) {
-        if (db.tokens[token].expires < threshold) {
-          delete db.tokens[token];
-        }
-      });
-      callback();
-    },
-
-    print: function() {
-      console.log(require('sys').inspect(db, false, 10));
-    }
-  };
-});
-
-var auther = autherCore.createAuthenticator({ storage: storage });
-
-
-
+var async = require('async');
+var nodeAuther = require('../lib/auther.js');
+var auther = nodeAuther.createAuthenticator();
 
 async.series([
   function(callback) {
@@ -198,25 +116,10 @@ async.series([
       callback();
     });
   }
-
-
-
-
-
-
-
-  
-  
-  
-  
 ], function(err) {
   if (err) {
     console.log("err", err);
   } else {
     console.log("done without errors!");
   }
-  
-  storage.print();
 });
-
-
