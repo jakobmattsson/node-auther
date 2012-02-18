@@ -1,7 +1,7 @@
 var sys = require('sys');
 var assert = require('assert');
 var async = require("async");
-var autherCore = require('./auther.js');
+var autherCore = require('../lib/auther.js');
 
 var block = function(f) {
   return f();
