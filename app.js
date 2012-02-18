@@ -8,26 +8,24 @@ var block = function(f) {
 };
 
 var storage = block(function() {
-  var all = {
-    db: {},
+  var db = {
+    users: {},
     tokens: {}
   };
 
-  var db = all.db;
-  var tokens = all.tokens;
   return {
     putToken: function(token, email, expires, callback) {
-      tokens[token] = { email: email, expires: expires };
+      db.tokens[token] = { email: email, expires: expires };
       callback();
     },
     isTokenUnique: function(token, callback) {
-      callback(null, true);
+      callback(null, !db.tokens[token]);
     },
     getTokenData: function(token, callback) {
-      if (!tokens[token]) {
+      if (!db.tokens[token]) {
         callback("Invalid token");
       } else {
-        callback(null, tokens[token].expires, tokens[token].email);
+        callback(null, db.tokens[token].expires, db.tokens[token].email);
       }
     },
 
@@ -36,13 +34,31 @@ var storage = block(function() {
       
     },
 
-    putUser: function(email, data, callback) {
+    setUserConfirmed: function(email, callback) {
+      if (!db.users[email]) {
+        callback('Invalid user');
+      } else {
+        db.users[email].activationToken = null;
+        callback();
+      }
+    },
+
+    setUserPassword: function(email, password, callback) {
+      if (!db.users[email]) {
+        callback('Invalid user');
+      } else {
+        db.users[email].password = password;
+        callback();
+      }
+    },
+
+    createUser: function(email, data, callback) {
       var newuser = false;
-      var user = db[email];
+      var user = db.users[email];
 
       if (!user) {
         newuser = true;
-        user = db[email] = {};
+        user = db.users[email] = {};
       }
 
       Object.keys(data).forEach(function(key) {
@@ -52,17 +68,17 @@ var storage = block(function() {
       callback(null, newuser);
     },
     getUser: function(email, callback) {
-      callback(null, db[email]);
+      callback(null, db.users[email]);
     },
     delUser: function(email, callback) {
-      if (db[email]) {
-        delete db[email];
+      if (db.users[email]) {
+        delete db.users[email];
         callback(null, true);
       }
       callback(null, false);
     },
     print: function() {
-      console.log(require('sys').inspect(all, false, 10));
+      console.log(require('sys').inspect(db, false, 10));
     }
   };
 });

@@ -120,9 +120,7 @@ exports.createAuthenticator = function(config) {
             return;
           }
 
-          storage.putUser(email, {
-            password: hash(password + user.salt)
-          }, function(err) {
+          storage.setUserPassword(email, hash(password + user.salt), function(err) {
             if (err) {
               callback("Internal error");
             } else {
@@ -148,7 +146,7 @@ exports.createAuthenticator = function(config) {
       }
 
       if (hash(token) == user.activationToken) {
-        storage.putUser(email, { activationToken: null }, function(err) {
+        storage.setUserConfirmed(email, function(err) {
           callback(err, false);
         });
       } else {
@@ -193,7 +191,7 @@ exports.createAuthenticator = function(config) {
         var salt = createSalt();
         var activationToken = createSalt();
 
-        storage.putUser(email, {
+        storage.createUser(email, {
           password: hash(password + salt),
           activationToken: hash(activationToken),
           salt: salt
