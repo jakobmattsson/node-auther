@@ -66,7 +66,7 @@ auth.updatePassword('0123456789abcdef', 'new_password', function(err) {
 
 Creating more advanced authenticators
 -------------------------------------
-
+coming soon...
 
 
 Notes
